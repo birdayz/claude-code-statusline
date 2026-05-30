@@ -26,7 +26,19 @@ go build -o claude-statusline .
 
 ## Wire it up
 
-Point Claude Code at the binary in `~/.claude/settings.json`:
+Point Claude Code at the binary in `~/.claude/settings.json`. This merges the
+setting in without touching anything else you have there:
+
+```bash
+mkdir -p ~/.claude
+f=~/.claude/settings.json
+[ -f "$f" ] || echo '{}' > "$f"
+tmp=$(mktemp)
+jq '.statusLine = {type: "command", command: "claude-code-statusline --two-line"}' "$f" > "$tmp" && mv "$tmp" "$f"
+```
+
+Drop `--two-line` if you want everything on a single line. If you prefer to
+edit by hand, the setting is just:
 
 ```json
 {
@@ -36,8 +48,6 @@ Point Claude Code at the binary in `~/.claude/settings.json`:
   }
 }
 ```
-
-Drop `--two-line` if you want everything on a single line.
 
 ## Requirements
 
