@@ -26,19 +26,15 @@ go build -o claude-statusline .
 
 ## Wire it up
 
-Point Claude Code at the binary in `~/.claude/settings.json`. This merges the
-setting in without touching anything else you have there:
+Run it once. It writes the `statusLine` entry into `~/.claude/settings.json`,
+using the absolute path of the binary and preserving everything else already
+in there:
 
-```bash
-mkdir -p ~/.claude
-f=~/.claude/settings.json
-[ -f "$f" ] || echo '{}' > "$f"
-tmp=$(mktemp)
-jq '.statusLine = {type: "command", command: "claude-code-statusline --two-line"}' "$f" > "$tmp" && mv "$tmp" "$f"
+```
+claude-code-statusline --install
 ```
 
-Drop `--two-line` if you want everything on a single line. If you prefer to
-edit by hand, the setting is just:
+If you prefer to wire it up by hand, the setting is just:
 
 ```json
 {
@@ -48,6 +44,8 @@ edit by hand, the setting is just:
   }
 }
 ```
+
+Drop `--two-line` if you want everything on a single line.
 
 ## Requirements
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -68,6 +69,14 @@ var gitBranchFunc = gitBranchExec
 var prInfoFunc = prInfoExec
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--install" {
+		if err := install(); err != nil {
+			fmt.Fprintln(os.Stderr, "install failed:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	twoLine := len(os.Args) > 1 && os.Args[1] == "--two-line"
 
 	data, err := io.ReadAll(os.Stdin)
@@ -90,6 +99,56 @@ func main() {
 	} else {
 		fmt.Print(renderPowerline(segments))
 	}
+}
+
+// install wires this binary into ~/.claude/settings.json as the statusLine
+// command, preserving any other settings already present.
+func install() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "settings.json")
+
+	settings := map[string]any{}
+	switch data, err := os.ReadFile(path); {
+	case err == nil:
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &settings); err != nil {
+				return fmt.Errorf("%s is not valid JSON: %w", path, err)
+			}
+		}
+	case !os.IsNotExist(err):
+		return err
+	}
+
+	settings["statusLine"] = map[string]any{
+		"type":    "command",
+		"command": exe + " --two-line",
+	}
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+		return err
+	}
+
+	fmt.Printf("wired statusLine into %s\n  command: %s --two-line\n", path, exe)
+	return nil
 }
 
 func buildSegments(input statusInput) []segment {
