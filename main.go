@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	powerlineSep = ""
-	gitBranchIcon = "\ue0a0"
-	resetSeq     = "\033[0m"
+	powerlineSep  = ""
+	gitBranchIcon = ""
+	resetSeq      = "\033[0m"
 )
 
 func fg256(c int) string { return fmt.Sprintf("\033[38;5;%dm", c) }
@@ -65,8 +65,11 @@ type statusInput struct {
 }
 
 var gitBranchFunc = gitBranchExec
+var prInfoFunc = prInfoExec
 
 func main() {
+	twoLine := len(os.Args) > 1 && os.Args[1] == "--two-line"
+
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return
@@ -80,7 +83,9 @@ func main() {
 	segments := buildSegments(input)
 	width := terminalWidth()
 
-	if width > 0 {
+	if twoLine && width >= 80 {
+		fmt.Print(renderTwoLine(input))
+	} else if width > 0 {
 		fmt.Print(renderResponsive(segments, width))
 	} else {
 		fmt.Print(renderPowerline(segments))
@@ -128,10 +133,113 @@ func buildSegments(input statusInput) []segment {
 	return segments
 }
 
+func renderTwoLine(input statusInput) string {
+	// Line 1: session name + PR info
+	var top []segment
+
+	if name := input.SessionName; name != "" {
+		if len(name) > 50 {
+			name = name[:47] + "..."
+		}
+		top = append(top, segment{" " + name + " ", 255, 62})
+	}
+
+	if pr := prInfoFunc(input); pr != "" {
+		top = append(top, segment{" " + pr + " ", 255, 54})
+	}
+
+	// Line 2: everything else
+	var bottom []segment
+
+	if model := modelName(input); model != "" {
+		bottom = append(bottom, segment{" " + model + " ", 255, 25})
+	}
+
+	if branch := gitBranchFunc(input); branch != "" {
+		bottom = append(bottom, segment{" " + gitBranchIcon + " " + branch + " ", 255, 22})
+	}
+
+	if ctx := contextWindow(input); ctx != "" {
+		bottom = append(bottom, segment{" " + ctx + " ", 16, 178})
+	}
+
+	if c := cost(input); c != "" {
+		bottom = append(bottom, segment{" " + c + " ", 255, 88})
+	}
+
+	if rl := rateLimit(input); rl != "" {
+		bottom = append(bottom, segment{" " + rl + " ", 16, 214})
+	}
+
+	if sid := sessionID(input); sid != "" {
+		bottom = append(bottom, segment{" " + sid + " ", 250, 238})
+	}
+
+	if dur := duration(input); dur != "" {
+		bottom = append(bottom, segment{" " + dur + " ", 255, 97})
+	}
+
+	line1 := renderPowerline(top)
+	line2 := renderPowerline(bottom)
+
+	if line1 != "" && line2 != "" {
+		return line1 + "\n" + line2
+	}
+	if line1 != "" {
+		return line1
+	}
+	return line2
+}
+
+type prInfo struct {
+	Number int    `json:"number"`
+	URL    string `json:"url"`
+}
+
+func prInfoExec(input statusInput) string {
+	cwd := input.Cwd
+	if cwd == "" {
+		cwd = input.Workspace.CurrentDir
+	}
+	if cwd == "" {
+		return ""
+	}
+
+	out, err := exec.Command("gh", "pr", "view", "--json", "number,url", "-R", ghRepo(cwd)).Output()
+	if err != nil {
+		return ""
+	}
+
+	var pr prInfo
+	if err := json.Unmarshal(out, &pr); err != nil || pr.Number == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("#%d %s", pr.Number, pr.URL)
+}
+
+func ghRepo(cwd string) string {
+	out, err := exec.Command("git", "-C", cwd, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	url := strings.TrimSpace(string(out))
+	// ssh://git@github.com/owner/repo.git or git@github.com:owner/repo.git or https://...
+	url = strings.TrimSuffix(url, ".git")
+	if strings.Contains(url, "github.com") {
+		parts := strings.Split(url, "github.com")
+		if len(parts) == 2 {
+			repo := strings.TrimLeft(parts[1], "/:")
+			return repo
+		}
+	}
+	return ""
+}
+
 func segmentsWidth(segments []segment) int {
 	w := 0
 	for _, s := range segments {
-		w += s.visibleWidth() + 1 // +1 for separator
+		w += s.visibleWidth() + 1
 	}
 	return w
 }
@@ -142,7 +250,6 @@ func renderResponsive(segments []segment, width int) string {
 		return renderPowerline(segments)
 	}
 
-	// Split into two lines at the point where first line fits
 	split := len(segments)
 	running := 0
 	for i, s := range segments {
